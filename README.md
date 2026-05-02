@@ -19,13 +19,16 @@ python3 -m http.server 4173
 
 브라우저에서 `http://localhost:4173`을 엽니다.
 
+## 배포 주소
+
+- Production: <https://open-file-transfer-web.vercel.app>
+
 ## Vercel 배포
 
 정적 프로젝트이므로 저장소를 Vercel에 연결하거나 CLI로 배포할 수 있습니다.
 
 ```bash
-vercel
-vercel --prod
+npx vercel --prod --yes --name open-file-transfer-web
 ```
 
 ## 사용 흐름

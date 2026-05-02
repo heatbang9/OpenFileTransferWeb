@@ -4,6 +4,8 @@
 
 이 프로젝트는 빌드 단계가 없는 정적 웹 앱입니다. Vercel 프로젝트 루트를 저장소 루트로 잡으면 `index.html`, `app.js`, `styles.css`, `assets/`가 그대로 배포됩니다.
 
+현재 Production 주소는 <https://open-file-transfer-web.vercel.app> 입니다.
+
 ## 로컬 확인
 
 ```bash
@@ -16,8 +18,7 @@ python3 -m http.server 4173
 ## Vercel CLI 배포
 
 ```bash
-vercel
-vercel --prod
+npx vercel --prod --yes --name open-file-transfer-web
 ```
 
 Framework Preset은 `Other` 또는 정적 프로젝트로 둡니다. Build Command는 비워두고 Output Directory도 비워둡니다.
