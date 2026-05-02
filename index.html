@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="OpenFileTransfer Web MVP는 설치 없이 WebRTC로 브라우저 간 파일을 직접 전송합니다."
+    />
+    <title>OpenFileTransfer Web</title>
+    <link rel="icon" href="/assets/icon.svg" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-icon" src="/assets/icon.svg" alt="" />
+          <div>
+            <h1>OpenFileTransfer Web</h1>
+            <p id="connectionSummary">대기 중</p>
+          </div>
+        </div>
+        <div class="status-pill" id="connectionState">오프라인</div>
+      </header>
+
+      <section class="layout">
+        <aside class="side-panel">
+          <label class="field-label" for="deviceName">디바이스 이름</label>
+          <div class="name-row">
+            <input id="deviceName" autocomplete="off" maxlength="32" />
+            <button class="icon-button" id="saveDeviceName" title="이름 저장" aria-label="이름 저장">✓</button>
+          </div>
+
+          <div class="device-card">
+            <span class="muted-label">내 UUID</span>
+            <code id="deviceId"></code>
+          </div>
+
+          <div class="mode-switch" role="tablist" aria-label="전송 모드">
+            <button class="mode-button active" id="senderMode" type="button">보내기</button>
+            <button class="mode-button" id="receiverMode" type="button">받기</button>
+          </div>
+
+          <button class="secondary-button" id="resetConnection" type="button">연결 초기화</button>
+        </aside>
+
+        <section class="work-panel">
+          <section class="role-card active" id="senderPanel" aria-labelledby="senderTitle">
+            <div class="panel-heading">
+              <div>
+                <span class="muted-label">Sender</span>
+                <h2 id="senderTitle">파일 보내기</h2>
+              </div>
+              <span class="mini-badge" id="senderReady">준비 전</span>
+            </div>
+
+            <label class="drop-zone" for="fileInput" id="dropZone">
+              <input id="fileInput" type="file" />
+              <span class="drop-icon">⇄</span>
+              <strong id="fileName">파일 선택</strong>
+              <small id="fileSize">선택된 파일 없음</small>
+            </label>
+
+            <div class="signal-grid">
+              <div class="signal-box">
+                <div class="box-heading">
+                  <span>초대 코드</span>
+                  <button class="text-button" id="copyOffer" type="button">복사</button>
+                </div>
+                <textarea id="offerCode" readonly spellcheck="false" placeholder="초대 코드를 만들면 여기에 표시됩니다."></textarea>
+                <button class="primary-button" id="createOffer" type="button">초대 코드 만들기</button>
+              </div>
+
+              <div class="signal-box">
+                <div class="box-heading">
+                  <span>응답 코드</span>
+                  <button class="text-button" id="pasteAnswer" type="button">붙여넣기</button>
+                </div>
+                <textarea id="answerInput" spellcheck="false" placeholder="받는 쪽의 응답 코드를 붙여넣으세요."></textarea>
+                <button class="primary-button" id="acceptAnswer" type="button">응답 코드 연결</button>
+              </div>
+            </div>
+
+            <button class="send-button" id="sendFile" type="button" disabled>파일 전송</button>
+          </section>
+
+          <section class="role-card" id="receiverPanel" aria-labelledby="receiverTitle">
+            <div class="panel-heading">
+              <div>
+                <span class="muted-label">Receiver</span>
+                <h2 id="receiverTitle">파일 받기</h2>
+              </div>
+              <span class="mini-badge" id="receiverReady">준비 전</span>
+            </div>
+
+            <div class="signal-grid single">
+              <div class="signal-box">
+                <div class="box-heading">
+                  <span>초대 코드</span>
+                  <button class="text-button" id="pasteOffer" type="button">붙여넣기</button>
+                </div>
+                <textarea id="offerInput" spellcheck="false" placeholder="보내는 쪽의 초대 코드를 붙여넣으세요."></textarea>
+                <button class="primary-button" id="createAnswer" type="button">응답 코드 만들기</button>
+              </div>
+
+              <div class="signal-box">
+                <div class="box-heading">
+                  <span>응답 코드</span>
+                  <button class="text-button" id="copyAnswer" type="button">복사</button>
+                </div>
+                <textarea id="answerCode" readonly spellcheck="false" placeholder="응답 코드를 만들면 여기에 표시됩니다."></textarea>
+              </div>
+            </div>
+
+            <a class="download-button hidden" id="downloadFile">받은 파일 저장</a>
+          </section>
+
+          <section class="transfer-panel">
+            <div class="panel-heading compact">
+              <div>
+                <span class="muted-label">Transfer</span>
+                <h2>진행 상태</h2>
+              </div>
+              <span id="transferPercent">0%</span>
+            </div>
+            <div class="progress-track" aria-label="전송 진행률">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <ol class="event-list" id="eventList" aria-live="polite"></ol>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

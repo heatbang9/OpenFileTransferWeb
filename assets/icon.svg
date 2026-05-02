@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="OpenFileTransfer Web">
+  <defs>
+    <linearGradient id="bg" x1="30" x2="226" y1="30" y2="226" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DDF8E8"/>
+      <stop offset="1" stop-color="#31AA70"/>
+    </linearGradient>
+    <linearGradient id="top" x1="34" x2="215" y1="70" y2="114" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E7FFF1"/>
+    </linearGradient>
+    <linearGradient id="bottom" x1="42" x2="220" y1="176" y2="126" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#176A63"/>
+      <stop offset="1" stop-color="#31AA70"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#176A63" flood-opacity="0.24"/>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="64" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="92" fill="#F7FFF9" opacity="0.78"/>
+  <g filter="url(#shadow)">
+    <path d="M202 86H89l25-25-22-22-62 62 62 62 22-22-25-25h113c13 0 23-10 23-23s-10-23-23-23Z" fill="url(#top)"/>
+    <path d="M54 170h113l-25 25 22 22 62-62-62-62-22 22 25 25H54c-13 0-23 10-23 23s10 23 23 23Z" fill="url(#bottom)"/>
+  </g>
+  <circle cx="128" cy="128" r="19" fill="#FFFFFF" opacity="0.9"/>
+</svg>
