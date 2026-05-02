@@ -37,6 +37,9 @@
             <code id="deviceId"></code>
           </div>
 
+          <label class="field-label spaced" for="passphrase">전송 암호</label>
+          <input id="passphrase" type="password" autocomplete="new-password" placeholder="선택 사항" />
+
           <div class="mode-switch" role="tablist" aria-label="전송 모드">
             <button class="mode-button active" id="senderMode" type="button">보내기</button>
             <button class="mode-button" id="receiverMode" type="button">받기</button>
@@ -56,19 +59,27 @@
             </div>
 
             <label class="drop-zone" for="fileInput" id="dropZone">
-              <input id="fileInput" type="file" />
+              <input id="fileInput" type="file" multiple />
               <span class="drop-icon">⇄</span>
-              <strong id="fileName">파일 선택</strong>
-              <small id="fileSize">선택된 파일 없음</small>
+              <strong id="fileName">파일 선택 또는 드롭</strong>
+              <small id="fileSize">선택된 파일 0개</small>
             </label>
+
+            <ul class="file-list" id="selectedFiles" aria-live="polite"></ul>
 
             <div class="signal-grid">
               <div class="signal-box">
                 <div class="box-heading">
                   <span>초대 코드</span>
-                  <button class="text-button" id="copyOffer" type="button">복사</button>
+                  <span class="button-cluster">
+                    <button class="text-button" id="copyOffer" type="button">복사</button>
+                    <button class="text-button" id="shareOffer" type="button">공유</button>
+                  </span>
                 </div>
                 <textarea id="offerCode" readonly spellcheck="false" placeholder="초대 코드를 만들면 여기에 표시됩니다."></textarea>
+                <div class="qr-card hidden" id="offerQrCard">
+                  <canvas id="offerQr" width="220" height="220" aria-label="초대 링크 QR"></canvas>
+                </div>
                 <button class="primary-button" id="createOffer" type="button">초대 코드 만들기</button>
               </div>
 
@@ -82,7 +93,10 @@
               </div>
             </div>
 
-            <button class="send-button" id="sendFile" type="button" disabled>파일 전송</button>
+            <div class="action-row">
+              <button class="send-button" id="sendFile" type="button" disabled>선택 파일 전송</button>
+              <button class="danger-button" id="cancelTransfer" type="button" disabled>중지</button>
+            </div>
           </section>
 
           <section class="role-card" id="receiverPanel" aria-labelledby="receiverTitle">
@@ -107,13 +121,25 @@
               <div class="signal-box">
                 <div class="box-heading">
                   <span>응답 코드</span>
-                  <button class="text-button" id="copyAnswer" type="button">복사</button>
+                  <span class="button-cluster">
+                    <button class="text-button" id="copyAnswer" type="button">복사</button>
+                    <button class="text-button" id="shareAnswer" type="button">공유</button>
+                  </span>
                 </div>
                 <textarea id="answerCode" readonly spellcheck="false" placeholder="응답 코드를 만들면 여기에 표시됩니다."></textarea>
+                <div class="qr-card hidden" id="answerQrCard">
+                  <canvas id="answerQr" width="220" height="220" aria-label="응답 코드 QR"></canvas>
+                </div>
               </div>
             </div>
 
-            <a class="download-button hidden" id="downloadFile">받은 파일 저장</a>
+            <section class="received-panel">
+              <div class="box-heading">
+                <span>받은 파일</span>
+                <button class="text-button" id="clearReceived" type="button">비우기</button>
+              </div>
+              <ul class="file-list downloads" id="receivedFiles" aria-live="polite"></ul>
+            </section>
           </section>
 
           <section class="transfer-panel">
@@ -133,6 +159,7 @@
       </section>
     </main>
 
+    <script src="/vendor/qr-creator.min.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>

@@ -144,6 +144,12 @@ h2 {
   text-transform: uppercase;
 }
 
+.field-label.spaced {
+  display: block;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
 .name-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;
@@ -164,6 +170,10 @@ textarea {
 input {
   min-height: 42px;
   padding: 0 12px;
+}
+
+input::placeholder {
+  color: #91a29a;
 }
 
 textarea {
@@ -187,6 +197,7 @@ textarea:focus {
 .send-button,
 .text-button,
 .download-button,
+.danger-button,
 .mode-button {
   border: 0;
   border-radius: 8px;
@@ -348,9 +359,17 @@ textarea:focus {
   background: var(--mint-50);
 }
 
+.button-cluster {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .primary-button,
 .send-button,
-.download-button {
+.download-button,
+.danger-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -364,17 +383,101 @@ textarea:focus {
 
 .send-button {
   min-height: 54px;
-  margin-top: 16px;
+  margin-top: 0;
   font-size: 16px;
 }
 
-.send-button:disabled {
+.danger-button {
+  margin-top: 0;
+  color: var(--danger);
+  background: #fff1f1;
+}
+
+.send-button:disabled,
+.danger-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 
-.download-button.hidden {
+.action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.hidden {
   display: none;
+}
+
+.file-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+.file-list:empty {
+  display: none;
+}
+
+.file-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.file-list strong,
+.file-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.file-list small {
+  color: var(--muted);
+}
+
+.download-button {
+  width: auto;
+  min-height: 36px;
+  margin-top: 0;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.received-panel {
+  margin-top: 16px;
+}
+
+.qr-card {
+  display: grid;
+  place-items: center;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.qr-card.hidden {
+  display: none;
+}
+
+.qr-card canvas {
+  width: min(220px, 100%);
+  height: auto;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.downloads {
+  margin-bottom: 0;
 }
 
 .transfer-panel {
@@ -448,5 +551,10 @@ textarea:focus {
 
   .layout {
     display: grid;
+  }
+
+  .action-row,
+  .file-list li {
+    grid-template-columns: 1fr;
   }
 }
