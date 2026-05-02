@@ -10,7 +10,7 @@
 
 ```bash
 npm run check
-python3 -m http.server 4173
+npm run vercel:dev
 ```
 
 브라우저에서 `http://localhost:4173`을 열어 화면과 정적 리소스를 확인합니다.
@@ -34,6 +34,7 @@ Framework Preset은 `Other` 또는 정적 프로젝트로 둡니다. Build Comma
 ## 주의 사항
 
 - 파일 데이터는 Vercel에 업로드되지 않습니다.
+- Nearby 방 기능은 Vercel Runtime Cache에 디바이스 presence와 연결용 signaling 메시지만 짧게 저장합니다.
 - 초대/응답 코드는 URL hash 또는 클립보드로만 오갑니다.
 - URL hash는 서버 요청에 포함되지 않지만, 사용자가 직접 채팅/메신저에 공유하면 그 채널에는 노출됩니다.
 - WebRTC 직접 연결이 실패하는 네트워크에서는 TURN 서버가 필요합니다.

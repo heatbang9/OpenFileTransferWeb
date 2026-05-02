@@ -5,9 +5,13 @@
   "description": "OpenFileTransfer WebRTC browser-only MVP for Vercel static deployment.",
   "scripts": {
     "dev": "python3 -m http.server 4173",
-    "check": "node --check app.js"
+    "vercel:dev": "npx vercel dev --listen 4173",
+    "check": "node --check app.js && node --check api/nearby.js"
   },
   "devDependencies": {
     "qr-creator": "^1.0.0"
+  },
+  "dependencies": {
+    "@vercel/functions": "^3.5.0"
   }
 }

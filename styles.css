@@ -157,6 +157,12 @@ h2 {
   margin-top: 8px;
 }
 
+.room-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+}
+
 input,
 textarea {
   width: 100%;
@@ -245,6 +251,47 @@ textarea:focus {
 .mode-button.active {
   color: #ffffff;
   background: var(--teal-700);
+}
+
+.nearby-panel {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.nearby-status {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.device-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-list:empty {
+  display: none;
+}
+
+.device-list li {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.device-list strong {
+  overflow-wrap: anywhere;
+}
+
+.device-list small {
+  color: var(--muted);
 }
 
 .secondary-button {
@@ -379,6 +426,12 @@ textarea:focus {
   color: #ffffff;
   background: var(--teal-700);
   text-decoration: none;
+}
+
+.compact-button {
+  min-height: 36px;
+  margin-top: 0;
+  font-size: 13px;
 }
 
 .send-button {

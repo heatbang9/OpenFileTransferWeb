@@ -45,6 +45,19 @@
             <button class="mode-button" id="receiverMode" type="button">받기</button>
           </div>
 
+          <section class="nearby-panel" aria-labelledby="nearbyTitle">
+            <div class="box-heading">
+              <span id="nearbyTitle">Nearby 방</span>
+              <button class="text-button" id="randomRoom" type="button">랜덤</button>
+            </div>
+            <div class="room-row">
+              <input id="roomCode" autocomplete="off" maxlength="32" placeholder="room-code" />
+              <button class="icon-button" id="joinRoom" title="방 참여" aria-label="방 참여">↗</button>
+            </div>
+            <div class="nearby-status" id="nearbyStatus">방에 참여하지 않음</div>
+            <ul class="device-list" id="nearbyDevices" aria-live="polite"></ul>
+          </section>
+
           <button class="secondary-button" id="resetConnection" type="button">연결 초기화</button>
         </aside>
 

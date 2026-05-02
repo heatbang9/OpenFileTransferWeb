@@ -15,6 +15,11 @@ const elements = {
   passphrase: $("passphrase"),
   senderMode: $("senderMode"),
   receiverMode: $("receiverMode"),
+  roomCode: $("roomCode"),
+  randomRoom: $("randomRoom"),
+  joinRoom: $("joinRoom"),
+  nearbyStatus: $("nearbyStatus"),
+  nearbyDevices: $("nearbyDevices"),
   resetConnection: $("resetConnection"),
   senderPanel: $("senderPanel"),
   receiverPanel: $("receiverPanel"),
@@ -61,6 +66,12 @@ const state = {
   connectedPeer: null,
   transferBusy: false,
   cancelRequested: false,
+  nearby: {
+    room: null,
+    timer: null,
+    devices: [],
+    seenMessages: new Set(),
+  },
 };
 
 function init() {
@@ -71,6 +82,7 @@ function init() {
   renderMode();
   applySignalFromHash();
   renderSelectedFiles();
+  restoreNearbyRoom();
   setConnection("오프라인", "대기 중", false);
   logEvent("웹 앱이 준비되었습니다.");
 }
@@ -79,6 +91,13 @@ function bindEvents() {
   elements.saveDeviceName.addEventListener("click", saveDeviceName);
   elements.senderMode.addEventListener("click", () => setMode("sender"));
   elements.receiverMode.addEventListener("click", () => setMode("receiver"));
+  elements.randomRoom.addEventListener("click", createRandomRoom);
+  elements.joinRoom.addEventListener("click", joinNearbyRoom);
+  elements.roomCode.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      joinNearbyRoom();
+    }
+  });
   elements.resetConnection.addEventListener("click", resetConnection);
   elements.fileInput.addEventListener("change", onFileSelected);
   elements.createOffer.addEventListener("click", createSenderOffer);
@@ -108,6 +127,7 @@ function bindEvents() {
   });
 
   window.addEventListener("hashchange", applySignalFromHash);
+  window.addEventListener("beforeunload", leaveNearbyRoom);
 }
 
 function loadDevice() {
@@ -207,6 +227,205 @@ function renderSelectedFiles() {
     item.append(info, remove);
     elements.selectedFiles.append(item);
   });
+}
+
+function createRandomRoom() {
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  const code = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  elements.roomCode.value = `oft-${code}`;
+  joinNearbyRoom();
+}
+
+async function joinNearbyRoom() {
+  const room = normalizeRoomCode(elements.roomCode.value);
+  if (!room) {
+    logEvent("방 코드를 입력해 주세요.", true);
+    return;
+  }
+
+  state.nearby.room = room;
+  localStorage.setItem("oft-web-room", room);
+  elements.roomCode.value = room;
+  setNearbyStatus(`${room} 방 참여 중`);
+  logEvent(`${room} 방에 참여했습니다.`);
+
+  if (state.nearby.timer) {
+    clearInterval(state.nearby.timer);
+  }
+
+  await heartbeatNearby();
+  state.nearby.timer = setInterval(heartbeatNearby, 3000);
+}
+
+function restoreNearbyRoom() {
+  const room = localStorage.getItem("oft-web-room");
+  if (room) {
+    elements.roomCode.value = room;
+  }
+}
+
+async function leaveNearbyRoom() {
+  if (!state.nearby.room) {
+    return;
+  }
+
+  const room = state.nearby.room;
+  state.nearby.room = null;
+  if (state.nearby.timer) {
+    clearInterval(state.nearby.timer);
+    state.nearby.timer = null;
+  }
+  setNearbyStatus("방에 참여하지 않음");
+  renderNearbyDevices([]);
+
+  try {
+    await nearbyRequest({
+      action: "leave",
+      room,
+      device: getDevice(),
+    });
+  } catch {
+    // 페이지 종료 중에는 실패해도 무시합니다.
+  }
+}
+
+async function heartbeatNearby() {
+  if (!state.nearby.room) {
+    return;
+  }
+
+  try {
+    const result = await nearbyRequest({
+      action: "heartbeat",
+      room: state.nearby.room,
+      device: getDevice(),
+    });
+    const devices = result.devices || [];
+    state.nearby.devices = devices;
+    renderNearbyDevices(devices);
+    setNearbyStatus(`${state.nearby.room} 방 · ${Math.max(0, devices.length - 1)}개 디바이스 발견`);
+    await handleNearbyMessages(result.messages || []);
+  } catch (error) {
+    setNearbyStatus("Nearby 동기화 실패");
+    handleError(error);
+  }
+}
+
+function renderNearbyDevices(devices) {
+  elements.nearbyDevices.innerHTML = "";
+  const myId = getDevice().id;
+  const peers = devices.filter((device) => device.id !== myId);
+
+  for (const device of peers) {
+    const item = document.createElement("li");
+    const info = document.createElement("span");
+    const name = document.createElement("strong");
+    const seen = document.createElement("small");
+    const connect = document.createElement("button");
+
+    name.textContent = device.name;
+    seen.textContent = `${Math.max(1, Math.round((Date.now() - device.lastSeen) / 1000))}초 전`;
+    info.append(name, document.createElement("br"), seen);
+    connect.type = "button";
+    connect.className = "primary-button compact-button";
+    connect.textContent = "연결 요청";
+    connect.addEventListener("click", () => connectNearbyDevice(device));
+
+    item.append(info, connect);
+    elements.nearbyDevices.append(item);
+  }
+}
+
+async function connectNearbyDevice(device) {
+  if (!state.nearby.room) {
+    logEvent("먼저 Nearby 방에 참여해 주세요.", true);
+    return;
+  }
+
+  try {
+    setMode("sender");
+    await createSenderOffer();
+    await sendNearbySignal(device.id, {
+      kind: "offer",
+      code: elements.offerCode.value,
+    });
+    logEvent(`${device.name}에 연결 요청을 보냈습니다.`);
+  } catch (error) {
+    handleError(error);
+  }
+}
+
+async function handleNearbyMessages(messages) {
+  for (const message of messages) {
+    if (state.nearby.seenMessages.has(message.id)) {
+      continue;
+    }
+    state.nearby.seenMessages.add(message.id);
+
+    if (message.payload?.kind === "offer") {
+      await handleNearbyOffer(message);
+    } else if (message.payload?.kind === "answer") {
+      await handleNearbyAnswer(message);
+    } else if (message.payload?.kind === "reject") {
+      logEvent(`${message.from.name}가 연결 요청을 거절했습니다.`, true);
+    }
+  }
+}
+
+async function handleNearbyOffer(message) {
+  const accepted = window.confirm(`${message.from.name}에서 파일 전송 연결을 요청했습니다. 수락할까요?`);
+  if (!accepted) {
+    await sendNearbySignal(message.from.id, { kind: "reject" });
+    return;
+  }
+
+  setMode("receiver");
+  elements.offerInput.value = message.payload.code;
+  await createReceiverAnswer();
+  await sendNearbySignal(message.from.id, {
+    kind: "answer",
+    code: elements.answerCode.value,
+  });
+  logEvent(`${message.from.name} 연결 요청을 수락했습니다.`);
+}
+
+async function handleNearbyAnswer(message) {
+  setMode("sender");
+  elements.answerInput.value = message.payload.code;
+  await acceptReceiverAnswer();
+  logEvent(`${message.from.name} 응답으로 Nearby 연결을 완료했습니다.`);
+}
+
+async function sendNearbySignal(to, payload) {
+  await nearbyRequest({
+    action: "signal",
+    room: state.nearby.room,
+    from: getDevice(),
+    to,
+    payload,
+  });
+}
+
+async function nearbyRequest(payload) {
+  const response = await fetch("/api/nearby", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.error) {
+    throw new Error(body.error || `Nearby API 오류 ${response.status}`);
+  }
+  return body;
+}
+
+function setNearbyStatus(message) {
+  elements.nearbyStatus.textContent = message;
+}
+
+function normalizeRoomCode(value) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
 }
 
 async function createSenderOffer() {
