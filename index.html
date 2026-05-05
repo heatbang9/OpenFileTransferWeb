@@ -8,7 +8,9 @@
       content="OpenFileTransfer Web MVP는 설치 없이 WebRTC로 브라우저 간 파일을 직접 전송합니다."
     />
     <title>OpenFileTransfer Web</title>
+    <meta name="theme-color" content="#176A63" />
     <link rel="icon" href="/assets/icon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -48,11 +50,15 @@
           <section class="turn-panel" aria-labelledby="turnTitle">
             <div class="box-heading">
               <span id="turnTitle">TURN 설정</span>
-              <button class="text-button" id="saveTurn" type="button">저장</button>
+              <span class="button-cluster">
+                <button class="text-button" id="testTurn" type="button">테스트</button>
+                <button class="text-button" id="saveTurn" type="button">저장</button>
+              </span>
             </div>
             <input id="turnUrl" autocomplete="off" placeholder="turn:host:3478" />
             <input id="turnUsername" autocomplete="off" placeholder="username" />
             <input id="turnCredential" type="password" autocomplete="new-password" placeholder="credential" />
+            <div class="nearby-status" id="turnStatus">기본 STUN 사용 중</div>
           </section>
 
           <div class="mode-switch" role="tablist" aria-label="전송 모드">
@@ -126,6 +132,7 @@
 
             <div class="action-row">
               <button class="send-button" id="sendFile" type="button" disabled>선택 파일 전송</button>
+              <button class="secondary-button inline-button" id="retryTransfer" type="button" disabled>재시도</button>
               <button class="danger-button" id="cancelTransfer" type="button" disabled>중지</button>
             </div>
           </section>

@@ -1,0 +1,18 @@
+{
+  "name": "OpenFileTransfer Web",
+  "short_name": "OFT Web",
+  "description": "WebRTC 기반 브라우저 파일 전송 앱",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F5FAF7",
+  "theme_color": "#176A63",
+  "icons": [
+    {
+      "src": "/assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

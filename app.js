@@ -22,6 +22,8 @@ const elements = {
   turnUsername: $("turnUsername"),
   turnCredential: $("turnCredential"),
   saveTurn: $("saveTurn"),
+  testTurn: $("testTurn"),
+  turnStatus: $("turnStatus"),
   senderMode: $("senderMode"),
   receiverMode: $("receiverMode"),
   roomCode: $("roomCode"),
@@ -57,6 +59,7 @@ const elements = {
   scanOffer: $("scanOffer"),
   scanAnswer: $("scanAnswer"),
   sendFile: $("sendFile"),
+  retryTransfer: $("retryTransfer"),
   cancelTransfer: $("cancelTransfer"),
   clearReceived: $("clearReceived"),
   receivedFiles: $("receivedFiles"),
@@ -82,6 +85,7 @@ const state = {
   connectedPeer: null,
   transferBusy: false,
   cancelRequested: false,
+  retryFiles: [],
   nearby: {
     room: null,
     timer: null,
@@ -112,6 +116,7 @@ function init() {
 function bindEvents() {
   elements.saveDeviceName.addEventListener("click", saveDeviceName);
   elements.saveTurn.addEventListener("click", saveTurnSettings);
+  elements.testTurn.addEventListener("click", testTurnRelay);
   elements.streamSave.addEventListener("change", saveStreamSetting);
   elements.senderMode.addEventListener("click", () => setMode("sender"));
   elements.receiverMode.addEventListener("click", () => setMode("receiver"));
@@ -136,6 +141,7 @@ function bindEvents() {
   elements.scanOffer.addEventListener("click", () => startQrScanner(elements.offerInput, "offer"));
   elements.scanAnswer.addEventListener("click", () => startQrScanner(elements.answerInput, "answer"));
   elements.sendFile.addEventListener("click", sendSelectedFiles);
+  elements.retryTransfer.addEventListener("click", retryFailedTransfer);
   elements.cancelTransfer.addEventListener("click", cancelTransfer);
   elements.clearReceived.addEventListener("click", clearReceivedFiles);
   elements.clearHistory.addEventListener("click", clearHistory);
@@ -192,6 +198,7 @@ function loadSettings() {
   elements.turnUrl.value = turn.urls || "";
   elements.turnUsername.value = turn.username || "";
   elements.turnCredential.value = turn.credential || "";
+  elements.turnStatus.textContent = turn.urls ? "사용자 TURN 설정 저장됨" : "기본 STUN 사용 중";
   elements.streamSave.checked = localStorage.getItem(STREAM_SAVE_STORAGE_KEY) === "true";
 }
 
@@ -203,7 +210,43 @@ function saveTurnSettings() {
   };
 
   localStorage.setItem(TURN_STORAGE_KEY, JSON.stringify(settings));
+  elements.turnStatus.textContent = settings.urls ? "사용자 TURN 설정 저장됨" : "기본 STUN 사용 중";
   logEvent(settings.urls ? "TURN 설정을 저장했습니다." : "TURN 설정을 비웠습니다.");
+}
+
+async function testTurnRelay() {
+  saveTurnSettings();
+  const turn = JSON.parse(localStorage.getItem(TURN_STORAGE_KEY) || "{}");
+  if (!turn.urls) {
+    elements.turnStatus.textContent = "테스트할 TURN URL이 없습니다.";
+    return;
+  }
+
+  elements.turnStatus.textContent = "TURN relay 후보 확인 중";
+  const pc = new RTCPeerConnection({
+    iceServers: getIceServers(),
+    iceTransportPolicy: "relay",
+  });
+  const relayCandidates = [];
+
+  try {
+    pc.createDataChannel("turn-test");
+    pc.addEventListener("icecandidate", (event) => {
+      if (event.candidate?.candidate.includes(" typ relay ")) {
+        relayCandidates.push(event.candidate.candidate);
+      }
+    });
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await sleep(5000);
+    elements.turnStatus.textContent = relayCandidates.length > 0 ? "TURN relay 후보 확인됨" : "TURN relay 후보 없음";
+    logEvent(elements.turnStatus.textContent, relayCandidates.length === 0);
+  } catch (error) {
+    elements.turnStatus.textContent = "TURN 테스트 실패";
+    handleError(error);
+  } finally {
+    pc.close();
+  }
 }
 
 function saveStreamSetting() {
@@ -623,6 +666,7 @@ async function sendSelectedFiles() {
 
   state.transferBusy = true;
   state.cancelRequested = false;
+  state.retryFiles = [];
   updateSendButton();
   setProgress(0);
 
@@ -630,12 +674,18 @@ async function sendSelectedFiles() {
     const totalBytes = state.selectedFiles.reduce((sum, file) => sum + file.size, 0);
     let batchSent = 0;
 
-    for (const file of state.selectedFiles) {
+    for (let index = 0; index < state.selectedFiles.length; index += 1) {
       if (state.cancelRequested) {
+        state.retryFiles = state.selectedFiles.slice(index);
         break;
       }
-      const sent = await sendOneFile(file, batchSent, totalBytes);
-      batchSent += sent;
+      try {
+        const sent = await sendOneFile(state.selectedFiles[index], batchSent, totalBytes);
+        batchSent += sent;
+      } catch (error) {
+        state.retryFiles = state.selectedFiles.slice(index);
+        throw error;
+      }
     }
 
     state.channel.send(JSON.stringify({ kind: "batchDone", count: state.selectedFiles.length }));
@@ -652,6 +702,18 @@ async function sendSelectedFiles() {
     state.cancelRequested = false;
     updateSendButton();
   }
+}
+
+function retryFailedTransfer() {
+  if (state.retryFiles.length === 0) {
+    return;
+  }
+
+  state.selectedFiles = [...state.retryFiles];
+  state.retryFiles = [];
+  renderSelectedFiles();
+  updateSendButton();
+  sendSelectedFiles();
 }
 
 async function sendOneFile(file, batchSent, totalBytes) {
@@ -719,6 +781,7 @@ async function sendOneFile(file, batchSent, totalBytes) {
 
 function cancelTransfer() {
   state.cancelRequested = true;
+  state.retryFiles = [...state.selectedFiles];
   elements.cancelTransfer.disabled = true;
 }
 
@@ -755,6 +818,7 @@ async function startReceive(meta) {
   let noncePrefix = null;
   let fileHandle = null;
   let writer = null;
+  let opfsHandle = null;
   if (meta.encrypted) {
     const passphrase = elements.passphrase.value;
     if (!passphrase) {
@@ -781,6 +845,17 @@ async function startReceive(meta) {
     }
   }
 
+  if (!writer && shouldUseOpfs()) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      opfsHandle = await root.getFileHandle(safeTempName(meta), { create: true });
+      writer = await opfsHandle.createWritable();
+      logEvent(`${meta.name} OPFS 임시 저장 사용`);
+    } catch (error) {
+      handleError(error);
+    }
+  }
+
   state.activeReceive = {
     meta,
     buffers: [],
@@ -789,6 +864,7 @@ async function startReceive(meta) {
     noncePrefix,
     sequence: 0,
     writer,
+    opfsHandle,
     streamed: Boolean(writer),
   };
   setProgress(0);
@@ -823,7 +899,13 @@ async function finishReceive(id) {
 
   if (active.writer) {
     await active.writer.close();
-    addReceivedFile(active.meta, null, { saved: true });
+    if (active.opfsHandle) {
+      const file = await active.opfsHandle.getFile();
+      const url = URL.createObjectURL(file);
+      addReceivedFile(active.meta, url, { opfs: true });
+    } else {
+      addReceivedFile(active.meta, null, { saved: true });
+    }
   } else {
     const blob = new Blob(active.buffers, { type: active.meta.type });
     const url = URL.createObjectURL(blob);
@@ -851,7 +933,7 @@ function addReceivedFile(meta, url, options = {}) {
   const action = options.saved ? document.createElement("span") : document.createElement("a");
 
   name.textContent = meta.name;
-  size.textContent = `${formatBytes(meta.size)}${meta.encrypted ? " · 암호화됨" : ""}${options.saved ? " · 저장됨" : ""}`;
+  size.textContent = `${formatBytes(meta.size)}${meta.encrypted ? " · 암호화됨" : ""}${options.saved ? " · 저장됨" : ""}${options.opfs ? " · 임시 저장됨" : ""}`;
   info.append(name, document.createElement("br"), size);
   action.className = options.saved ? "saved-pill" : "download-button";
   action.textContent = options.saved ? "완료" : "저장";
@@ -912,9 +994,14 @@ function shouldStreamToFile() {
   return elements.streamSave.checked && typeof window.showSaveFilePicker === "function";
 }
 
+function shouldUseOpfs() {
+  return elements.streamSave.checked && Boolean(navigator.storage?.getDirectory);
+}
+
 function updateSendButton() {
   const channelOpen = isChannelOpen();
   elements.sendFile.disabled = state.selectedFiles.length === 0 || !channelOpen || state.transferBusy;
+  elements.retryTransfer.disabled = state.retryFiles.length === 0 || !channelOpen || state.transferBusy;
   elements.cancelTransfer.disabled = !state.transferBusy;
 }
 
@@ -928,6 +1015,7 @@ function resetConnection(clearSignals = true) {
   state.receiveQueue = Promise.resolve();
   state.transferBusy = false;
   state.cancelRequested = false;
+  state.retryFiles = [];
 
   if (clearSignals) {
     elements.offerCode.value = "";
@@ -1251,6 +1339,10 @@ function extensionOf(name) {
   return match ? match[1] : "bin";
 }
 
+function safeTempName(meta) {
+  return `oft-${meta.id}-${meta.name}`.replace(/[^a-z0-9._-]/gi, "_").slice(0, 180);
+}
+
 function formatHistoryTime(value) {
   return new Intl.DateTimeFormat("ko-KR", {
     month: "2-digit",
@@ -1278,6 +1370,14 @@ function percent(value, total) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error) => {
+      logEvent(`PWA 캐시 등록 실패: ${error.message}`, true);
+    });
+  });
 }
 
 init();

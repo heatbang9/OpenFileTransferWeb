@@ -478,9 +478,14 @@ textarea:focus {
 
 .action-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px;
+  grid-template-columns: minmax(0, 1fr) 104px 104px;
   gap: 10px;
   margin-top: 16px;
+}
+
+.inline-button {
+  min-height: 54px;
+  margin-top: 0;
 }
 
 .hidden {

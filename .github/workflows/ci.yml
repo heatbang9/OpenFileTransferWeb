@@ -22,3 +22,5 @@ jobs:
           curl --fail http://localhost:4173/styles.css
           curl --fail http://localhost:4173/assets/icon.svg
           curl --fail http://localhost:4173/vendor/qr-creator.min.js
+          curl --fail http://localhost:4173/manifest.webmanifest
+          curl --fail http://localhost:4173/sw.js
