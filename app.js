@@ -2,7 +2,11 @@ const SIGNAL_VERSION = "oft-web-mvp-v2";
 const CHUNK_SIZE = 64 * 1024;
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 const PBKDF2_ITERATIONS = 120000;
-const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const TURN_STORAGE_KEY = "oft-web-turn";
+const HISTORY_STORAGE_KEY = "oft-web-history";
+const STREAM_SAVE_STORAGE_KEY = "oft-web-stream-save";
+const MAX_HISTORY_ITEMS = 50;
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,6 +17,11 @@ const elements = {
   saveDeviceName: $("saveDeviceName"),
   deviceId: $("deviceId"),
   passphrase: $("passphrase"),
+  streamSave: $("streamSave"),
+  turnUrl: $("turnUrl"),
+  turnUsername: $("turnUsername"),
+  turnCredential: $("turnCredential"),
+  saveTurn: $("saveTurn"),
   senderMode: $("senderMode"),
   receiverMode: $("receiverMode"),
   roomCode: $("roomCode"),
@@ -45,15 +54,22 @@ const elements = {
   shareAnswer: $("shareAnswer"),
   pasteOffer: $("pasteOffer"),
   pasteAnswer: $("pasteAnswer"),
+  scanOffer: $("scanOffer"),
+  scanAnswer: $("scanAnswer"),
   sendFile: $("sendFile"),
   cancelTransfer: $("cancelTransfer"),
   clearReceived: $("clearReceived"),
   receivedFiles: $("receivedFiles"),
+  clearHistory: $("clearHistory"),
+  historyList: $("historyList"),
   senderReady: $("senderReady"),
   receiverReady: $("receiverReady"),
   transferPercent: $("transferPercent"),
   progressFill: $("progressFill"),
   eventList: $("eventList"),
+  scanDialog: $("scanDialog"),
+  scanVideo: $("scanVideo"),
+  closeScanner: $("closeScanner"),
 };
 
 const state = {
@@ -72,6 +88,10 @@ const state = {
     devices: [],
     seenMessages: new Set(),
   },
+  scanner: {
+    stream: null,
+    stopped: true,
+  },
 };
 
 function init() {
@@ -79,9 +99,11 @@ function init() {
   elements.deviceName.value = device.name;
   elements.deviceId.textContent = device.id;
   bindEvents();
+  loadSettings();
   renderMode();
   applySignalFromHash();
   renderSelectedFiles();
+  renderHistory();
   restoreNearbyRoom();
   setConnection("오프라인", "대기 중", false);
   logEvent("웹 앱이 준비되었습니다.");
@@ -89,6 +111,8 @@ function init() {
 
 function bindEvents() {
   elements.saveDeviceName.addEventListener("click", saveDeviceName);
+  elements.saveTurn.addEventListener("click", saveTurnSettings);
+  elements.streamSave.addEventListener("change", saveStreamSetting);
   elements.senderMode.addEventListener("click", () => setMode("sender"));
   elements.receiverMode.addEventListener("click", () => setMode("receiver"));
   elements.randomRoom.addEventListener("click", createRandomRoom);
@@ -109,9 +133,14 @@ function bindEvents() {
   elements.shareAnswer.addEventListener("click", () => shareSignal("answer", elements.answerCode.value));
   elements.pasteOffer.addEventListener("click", () => pasteText(elements.offerInput));
   elements.pasteAnswer.addEventListener("click", () => pasteText(elements.answerInput));
+  elements.scanOffer.addEventListener("click", () => startQrScanner(elements.offerInput, "offer"));
+  elements.scanAnswer.addEventListener("click", () => startQrScanner(elements.answerInput, "answer"));
   elements.sendFile.addEventListener("click", sendSelectedFiles);
   elements.cancelTransfer.addEventListener("click", cancelTransfer);
   elements.clearReceived.addEventListener("click", clearReceivedFiles);
+  elements.clearHistory.addEventListener("click", clearHistory);
+  elements.closeScanner.addEventListener("click", stopQrScanner);
+  elements.scanDialog.addEventListener("close", stopQrScanner);
 
   elements.dropZone.addEventListener("dragover", (event) => {
     event.preventDefault();
@@ -156,6 +185,29 @@ function saveDeviceName() {
   localStorage.setItem("oft-web-device", JSON.stringify(device));
   elements.deviceName.value = device.name;
   logEvent("디바이스 이름을 저장했습니다.");
+}
+
+function loadSettings() {
+  const turn = JSON.parse(localStorage.getItem(TURN_STORAGE_KEY) || "{}");
+  elements.turnUrl.value = turn.urls || "";
+  elements.turnUsername.value = turn.username || "";
+  elements.turnCredential.value = turn.credential || "";
+  elements.streamSave.checked = localStorage.getItem(STREAM_SAVE_STORAGE_KEY) === "true";
+}
+
+function saveTurnSettings() {
+  const settings = {
+    urls: elements.turnUrl.value.trim(),
+    username: elements.turnUsername.value.trim(),
+    credential: elements.turnCredential.value,
+  };
+
+  localStorage.setItem(TURN_STORAGE_KEY, JSON.stringify(settings));
+  logEvent(settings.urls ? "TURN 설정을 저장했습니다." : "TURN 설정을 비웠습니다.");
+}
+
+function saveStreamSetting() {
+  localStorage.setItem(STREAM_SAVE_STORAGE_KEY, String(elements.streamSave.checked));
 }
 
 function defaultDeviceName() {
@@ -507,7 +559,7 @@ async function createReceiverAnswer() {
 }
 
 function createPeerConnection() {
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const pc = new RTCPeerConnection({ iceServers: getIceServers() });
 
   pc.addEventListener("connectionstatechange", () => {
     const peerName = state.connectedPeer?.name || "상대 디바이스";
@@ -526,6 +578,22 @@ function createPeerConnection() {
   });
 
   return pc;
+}
+
+function getIceServers() {
+  const turn = JSON.parse(localStorage.getItem(TURN_STORAGE_KEY) || "{}");
+  if (!turn.urls) {
+    return DEFAULT_ICE_SERVERS;
+  }
+
+  return [
+    ...DEFAULT_ICE_SERVERS,
+    {
+      urls: turn.urls,
+      username: turn.username || undefined,
+      credential: turn.credential || undefined,
+    },
+  ];
 }
 
 function setupDataChannel(channel) {
@@ -639,6 +707,13 @@ async function sendOneFile(file, batchSent, totalBytes) {
 
   state.channel.send(JSON.stringify({ kind: "done", id }));
   logEvent(`${file.name} 전송 완료`);
+  addHistoryItem({
+    direction: "send",
+    name: file.name,
+    size: file.size,
+    encrypted,
+    peer: state.connectedPeer?.name || "상대 디바이스",
+  });
   return fileSent;
 }
 
@@ -666,7 +741,7 @@ async function handleTextMessage(raw) {
   }
 
   if (message.kind === "done") {
-    finishReceive(message.id);
+    await finishReceive(message.id);
     return;
   }
 
@@ -678,6 +753,8 @@ async function handleTextMessage(raw) {
 async function startReceive(meta) {
   let key = null;
   let noncePrefix = null;
+  let fileHandle = null;
+  let writer = null;
   if (meta.encrypted) {
     const passphrase = elements.passphrase.value;
     if (!passphrase) {
@@ -687,6 +764,23 @@ async function startReceive(meta) {
     key = await deriveAesKey(passphrase, base64UrlToBytes(meta.salt));
   }
 
+  if (shouldStreamToFile()) {
+    try {
+      fileHandle = await window.showSaveFilePicker({
+        suggestedName: meta.name,
+        types: [{
+          description: meta.type || "application/octet-stream",
+          accept: { [meta.type || "application/octet-stream"]: [`.${extensionOf(meta.name)}`] },
+        }],
+      });
+      writer = await fileHandle.createWritable();
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        handleError(error);
+      }
+    }
+  }
+
   state.activeReceive = {
     meta,
     buffers: [],
@@ -694,6 +788,8 @@ async function startReceive(meta) {
     key,
     noncePrefix,
     sequence: 0,
+    writer,
+    streamed: Boolean(writer),
   };
   setProgress(0);
   logEvent(`${meta.name} 수신 시작`);
@@ -710,41 +806,61 @@ async function handleBinaryMessage(buffer) {
     : buffer;
 
   active.sequence += 1;
-  active.buffers.push(plain);
+  if (active.writer) {
+    await active.writer.write(new Uint8Array(plain));
+  } else {
+    active.buffers.push(plain);
+  }
   active.bytes += plain.byteLength;
   setProgress(percent(active.bytes, active.meta.size));
 }
 
-function finishReceive(id) {
+async function finishReceive(id) {
   const active = state.activeReceive;
   if (!active || active.meta.id !== id) {
     return;
   }
 
-  const blob = new Blob(active.buffers, { type: active.meta.type });
-  const url = URL.createObjectURL(blob);
-  addReceivedFile(active.meta, url);
+  if (active.writer) {
+    await active.writer.close();
+    addReceivedFile(active.meta, null, { saved: true });
+  } else {
+    const blob = new Blob(active.buffers, { type: active.meta.type });
+    const url = URL.createObjectURL(blob);
+    addReceivedFile(active.meta, url);
+  }
+
+  addHistoryItem({
+    direction: "receive",
+    name: active.meta.name,
+    size: active.meta.size,
+    encrypted: active.meta.encrypted,
+    peer: state.connectedPeer?.name || "상대 디바이스",
+    streamed: active.streamed,
+  });
   setProgress(100);
   logEvent(`${active.meta.name} 수신 완료`);
   state.activeReceive = null;
 }
 
-function addReceivedFile(meta, url) {
+function addReceivedFile(meta, url, options = {}) {
   const item = document.createElement("li");
   const info = document.createElement("span");
   const name = document.createElement("strong");
   const size = document.createElement("small");
-  const download = document.createElement("a");
+  const action = options.saved ? document.createElement("span") : document.createElement("a");
 
   name.textContent = meta.name;
-  size.textContent = `${formatBytes(meta.size)}${meta.encrypted ? " · 암호화됨" : ""}`;
+  size.textContent = `${formatBytes(meta.size)}${meta.encrypted ? " · 암호화됨" : ""}${options.saved ? " · 저장됨" : ""}`;
   info.append(name, document.createElement("br"), size);
-  download.className = "download-button";
-  download.href = url;
-  download.download = meta.name;
-  download.textContent = "저장";
+  action.className = options.saved ? "saved-pill" : "download-button";
+  action.textContent = options.saved ? "완료" : "저장";
+  if (!options.saved) {
+    action.href = url;
+    action.download = meta.name;
+  }
 
-  item.append(info, download);
+  item.append(info, action);
   elements.receivedFiles.prepend(item);
 }
 
@@ -754,6 +870,46 @@ function clearReceivedFiles() {
   }
   elements.receivedFiles.innerHTML = "";
   logEvent("받은 파일 목록을 비웠습니다.");
+}
+
+function addHistoryItem(item) {
+  const history = loadHistory();
+  history.unshift({
+    ...item,
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+  });
+  localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.slice(0, MAX_HISTORY_ITEMS)));
+  renderHistory();
+}
+
+function loadHistory() {
+  return JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || "[]");
+}
+
+function renderHistory() {
+  elements.historyList.innerHTML = "";
+  for (const item of loadHistory()) {
+    const row = document.createElement("li");
+    const name = document.createElement("strong");
+    const meta = document.createElement("small");
+    const direction = item.direction === "send" ? "송신" : "수신";
+
+    name.textContent = item.name;
+    meta.textContent = `${direction} · ${formatBytes(item.size)} · ${item.peer || "상대 디바이스"} · ${formatHistoryTime(item.at)}${item.encrypted ? " · 암호화" : ""}${item.streamed ? " · 바로 저장" : ""}`;
+    row.append(name, meta);
+    elements.historyList.append(row);
+  }
+}
+
+function clearHistory() {
+  localStorage.removeItem(HISTORY_STORAGE_KEY);
+  renderHistory();
+  logEvent("전송 이력을 비웠습니다.");
+}
+
+function shouldStreamToFile() {
+  return elements.streamSave.checked && typeof window.showSaveFilePicker === "function";
 }
 
 function updateSendButton() {
@@ -871,6 +1027,75 @@ async function copyText(value, message) {
 async function pasteText(target) {
   target.value = await navigator.clipboard.readText();
   target.focus();
+}
+
+async function startQrScanner(target, kind) {
+  if (!("BarcodeDetector" in window)) {
+    logEvent("이 브라우저는 QR 스캔을 지원하지 않습니다.", true);
+    return;
+  }
+
+  try {
+    state.scanner.stopped = false;
+    state.scanner.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false,
+    });
+    elements.scanVideo.srcObject = state.scanner.stream;
+    elements.scanDialog.showModal();
+
+    const detector = new BarcodeDetector({ formats: ["qr_code"] });
+    await elements.scanVideo.play();
+    scanLoop(detector, target, kind);
+  } catch (error) {
+    stopQrScanner();
+    handleError(error);
+  }
+}
+
+async function scanLoop(detector, target, kind) {
+  if (state.scanner.stopped) {
+    return;
+  }
+
+  try {
+    const codes = await detector.detect(elements.scanVideo);
+    if (codes.length > 0) {
+      target.value = extractSignalFromText(codes[0].rawValue, kind);
+      stopQrScanner();
+      target.focus();
+      logEvent("QR 코드를 불러왔습니다.");
+      return;
+    }
+  } catch {
+    // 프레임 준비 전 오류는 다음 프레임에서 다시 시도합니다.
+  }
+
+  requestAnimationFrame(() => scanLoop(detector, target, kind));
+}
+
+function stopQrScanner() {
+  state.scanner.stopped = true;
+  if (state.scanner.stream) {
+    for (const track of state.scanner.stream.getTracks()) {
+      track.stop();
+    }
+    state.scanner.stream = null;
+  }
+  elements.scanVideo.srcObject = null;
+  if (elements.scanDialog.open) {
+    elements.scanDialog.close();
+  }
+}
+
+function extractSignalFromText(text, kind) {
+  try {
+    const url = new URL(text);
+    const params = new URLSearchParams(url.hash.slice(1));
+    return params.get(kind) || text;
+  } catch {
+    return text;
+  }
 }
 
 async function shareSignal(kind, code) {
@@ -1019,6 +1244,20 @@ function isChannelOpen() {
 
 function fileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function extensionOf(name) {
+  const match = /\.([a-z0-9]{1,16})$/i.exec(name);
+  return match ? match[1] : "bin";
+}
+
+function formatHistoryTime(value) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function formatBytes(bytes) {

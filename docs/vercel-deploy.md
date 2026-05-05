@@ -37,5 +37,6 @@ Framework Preset은 `Other` 또는 정적 프로젝트로 둡니다. Build Comma
 - Nearby 방 기능은 Vercel Runtime Cache에 디바이스 presence와 연결용 signaling 메시지만 짧게 저장합니다.
 - 초대/응답 코드는 URL hash 또는 클립보드로만 오갑니다.
 - URL hash는 서버 요청에 포함되지 않지만, 사용자가 직접 채팅/메신저에 공유하면 그 채널에는 노출됩니다.
-- WebRTC 직접 연결이 실패하는 네트워크에서는 TURN 서버가 필요합니다.
+- WebRTC 직접 연결이 실패하는 네트워크에서는 TURN 서버 설정을 입력해야 합니다.
 - 모바일 브라우저는 화면 잠금 또는 앱 전환 시 전송이 끊길 수 있습니다.
+- QR 스캔과 바로 저장은 브라우저 지원 여부에 따라 사용할 수 있습니다.

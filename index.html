@@ -40,6 +40,21 @@
           <label class="field-label spaced" for="passphrase">전송 암호</label>
           <input id="passphrase" type="password" autocomplete="new-password" placeholder="선택 사항" />
 
+          <label class="toggle-row" for="streamSave">
+            <input id="streamSave" type="checkbox" />
+            <span>수신 파일 바로 저장</span>
+          </label>
+
+          <section class="turn-panel" aria-labelledby="turnTitle">
+            <div class="box-heading">
+              <span id="turnTitle">TURN 설정</span>
+              <button class="text-button" id="saveTurn" type="button">저장</button>
+            </div>
+            <input id="turnUrl" autocomplete="off" placeholder="turn:host:3478" />
+            <input id="turnUsername" autocomplete="off" placeholder="username" />
+            <input id="turnCredential" type="password" autocomplete="new-password" placeholder="credential" />
+          </section>
+
           <div class="mode-switch" role="tablist" aria-label="전송 모드">
             <button class="mode-button active" id="senderMode" type="button">보내기</button>
             <button class="mode-button" id="receiverMode" type="button">받기</button>
@@ -99,7 +114,10 @@
               <div class="signal-box">
                 <div class="box-heading">
                   <span>응답 코드</span>
-                  <button class="text-button" id="pasteAnswer" type="button">붙여넣기</button>
+                  <span class="button-cluster">
+                    <button class="text-button" id="pasteAnswer" type="button">붙여넣기</button>
+                    <button class="text-button" id="scanAnswer" type="button">스캔</button>
+                  </span>
                 </div>
                 <textarea id="answerInput" spellcheck="false" placeholder="받는 쪽의 응답 코드를 붙여넣으세요."></textarea>
                 <button class="primary-button" id="acceptAnswer" type="button">응답 코드 연결</button>
@@ -125,7 +143,10 @@
               <div class="signal-box">
                 <div class="box-heading">
                   <span>초대 코드</span>
-                  <button class="text-button" id="pasteOffer" type="button">붙여넣기</button>
+                  <span class="button-cluster">
+                    <button class="text-button" id="pasteOffer" type="button">붙여넣기</button>
+                    <button class="text-button" id="scanOffer" type="button">스캔</button>
+                  </span>
                 </div>
                 <textarea id="offerInput" spellcheck="false" placeholder="보내는 쪽의 초대 코드를 붙여넣으세요."></textarea>
                 <button class="primary-button" id="createAnswer" type="button">응답 코드 만들기</button>
@@ -167,10 +188,25 @@
               <div class="progress-fill" id="progressFill"></div>
             </div>
             <ol class="event-list" id="eventList" aria-live="polite"></ol>
+            <section class="history-panel">
+              <div class="box-heading">
+                <span>전송 이력</span>
+                <button class="text-button" id="clearHistory" type="button">비우기</button>
+              </div>
+              <ul class="history-list" id="historyList" aria-live="polite"></ul>
+            </section>
           </section>
         </section>
       </section>
     </main>
+
+    <dialog class="scan-dialog" id="scanDialog">
+      <div class="box-heading">
+        <span>QR 스캔</span>
+        <button class="text-button" id="closeScanner" type="button">닫기</button>
+      </div>
+      <video id="scanVideo" autoplay muted playsinline></video>
+    </dialog>
 
     <script src="/vendor/qr-creator.min.js"></script>
     <script src="/app.js" type="module"></script>
