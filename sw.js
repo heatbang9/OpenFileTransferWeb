@@ -1,4 +1,4 @@
-const CACHE_NAME = "oft-web-shell-v1";
+const CACHE_NAME = "oft-web-shell-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
