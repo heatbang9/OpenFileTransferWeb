@@ -11,7 +11,7 @@
 - 여러 파일 큐 전송, 수신 파일 목록, 공유 링크, QR 코드, 선택 전송 암호화를 지원합니다.
 - Vercel Runtime Cache 기반 Nearby 방에서 같은 방의 온라인 디바이스를 찾고 연결 요청을 보낼 수 있습니다.
 - 지원 브라우저에서는 QR 스캔, File System Access 기반 바로 저장, TURN 서버 설정, 전송 이력을 사용할 수 있습니다.
-- PWA 설치/오프라인 앱 shell 캐시와 실패 큐 재시도를 지원합니다.
+- PWA 설치/오프라인 앱 shell 캐시, 실패 큐 재시도, 청크 단위 이어받기를 지원합니다.
 
 ## 로컬 실행
 
@@ -47,7 +47,7 @@ npx vercel --prod --yes --name open-file-transfer-web
 
 - 외부 realtime signaling 기반 방 자동 매칭
 - TURN 서버 계정 발급과 네트워크별 연결 품질 테스트
-- 청크 단위 이어받기
+- 파일 해시 검증과 무결성 리포트
 
 ## 문서
 

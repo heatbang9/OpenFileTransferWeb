@@ -60,14 +60,21 @@ Vercel Function polling은 구현이 단순하지만, 즉시성은 3초 heartbea
 
 ## 재시도/이어받기
 
-현재 구현은 전송 실패 또는 중지 후 실패 큐를 보존하고 `재시도` 버튼으로 남은 파일을 처음부터 다시 보냅니다. 청크 단위 이어받기는 아직 다음 단계입니다.
+현재 구현은 전송 실패 또는 중지 후 실패 큐를 보존하고 `재시도` 버튼으로 남은 파일을 다시 보냅니다. 같은 파일을 다시 보내면 수신자가 localStorage에 저장한 청크 bitmap을 확인한 뒤 `resumeAck`로 누락 구간만 응답하고, 송신자는 빠진 청크만 전송합니다.
 
-이어받기를 구현하려면:
+이어받기 프로토콜:
 
-1. 파일별 `id`, `size`, `sha256`, `chunkSize` manifest를 먼저 보냅니다.
-2. 수신자는 받은 chunk index bitmap을 localStorage 또는 OPFS에 기록합니다.
-3. 재연결 후 수신자가 `resumeRequest`로 누락 chunk index 목록을 보냅니다.
-4. 송신자는 누락 chunk만 다시 보냅니다.
-5. 암호화 시 chunk nonce는 파일 ID와 chunk index로 결정적으로 만들어야 합니다.
+1. 송신자는 파일 이름, 크기, 마지막 수정 시간, 청크 크기로 안정적인 파일 ID를 만들고 `meta`에 `chunkSize`, `chunkCount`를 담아 보냅니다.
+2. 수신자는 같은 ID의 이어받기 상태가 있으면 받은 청크 bitmap을 복원합니다.
+3. 수신자는 `resumeAck`에 `missingRanges`와 `receivedBytes`를 담아 응답합니다.
+4. 송신자는 각 청크 전에 `{ kind: "chunk", id, index, size }`를 보내고, 이어서 바이너리 청크를 전송합니다.
+5. 암호화 시 AES-GCM nonce는 청크 index를 기준으로 만들기 때문에 누락 청크만 다시 보내도 복호화 순서가 맞습니다.
+6. 수신자는 청크를 받을 때 OPFS 또는 File System Access writer에 위치 기반으로 기록하고 bitmap을 갱신합니다.
 
-현재 수신 저장 경로는 File System Access API를 우선 사용하고, 사용할 수 없으면 OPFS 임시 파일을 사용합니다. 청크 단위 이어받기를 완성하려면 OPFS 파일과 chunk bitmap을 같은 파일 ID로 묶어 보관하면 됩니다.
+현재 수신 저장 경로는 `수신 파일 바로 저장`이 켜져 있고 File System Access API를 지원하면 사용자가 고른 파일을 우선 사용합니다. 그 외 OPFS를 지원하는 브라우저는 OPFS 임시 파일에 기록합니다. 둘 다 사용할 수 없는 브라우저는 메모리 Blob으로 받기 때문에 탭 종료 후 이어받기는 지원하지 않습니다.
+
+남은 보강:
+
+- 파일 전체 SHA-256 또는 chunk hash manifest 검증
+- 오래된 이어받기 bitmap과 OPFS 임시 파일 정리 UI
+- 외부 realtime signaling 적용 후 재연결 자동화

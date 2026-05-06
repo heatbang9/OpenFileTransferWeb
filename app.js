@@ -6,6 +6,8 @@ const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const TURN_STORAGE_KEY = "oft-web-turn";
 const HISTORY_STORAGE_KEY = "oft-web-history";
 const STREAM_SAVE_STORAGE_KEY = "oft-web-stream-save";
+const RESUME_STORAGE_PREFIX = "oft-web-resume:";
+const RESUME_ACK_TIMEOUT_MS = 10000;
 const MAX_HISTORY_ITEMS = 50;
 
 const $ = (id) => document.getElementById(id);
@@ -86,6 +88,7 @@ const state = {
   transferBusy: false,
   cancelRequested: false,
   retryFiles: [],
+  pendingResumeAcks: new Map(),
   nearby: {
     room: null,
     timer: null,
@@ -716,17 +719,25 @@ function retryFailedTransfer() {
   sendSelectedFiles();
 }
 
+function fileResumeId(file) {
+  const source = `${file.name}:${file.size}:${file.lastModified}:${CHUNK_SIZE}`;
+  return bytesToBase64Url(new TextEncoder().encode(source)).slice(0, 96);
+}
+
 async function sendOneFile(file, batchSent, totalBytes) {
   const passphrase = elements.passphrase.value;
   const encrypted = passphrase.length > 0;
   const cryptoContext = encrypted ? await createEncryptContext(passphrase) : null;
-  const id = crypto.randomUUID();
+  const id = fileResumeId(file);
+  const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
 
   state.channel.send(JSON.stringify({
     kind: "meta",
     id,
     name: file.name,
     size: file.size,
+    chunkSize: CHUNK_SIZE,
+    chunkCount,
     type: file.type || "application/octet-stream",
     updatedAt: file.lastModified,
     encrypted,
@@ -734,34 +745,38 @@ async function sendOneFile(file, batchSent, totalBytes) {
     noncePrefix: cryptoContext ? bytesToBase64Url(cryptoContext.noncePrefix) : null,
   }));
 
+  const resumeAck = await waitForResumeAck(id);
+  const missingRanges = Array.isArray(resumeAck.missingRanges) ? resumeAck.missingRanges : [[0, chunkCount - 1]];
+  const receivedBytes = resumeAck.receivedBytes || 0;
   logEvent(`${file.name} 전송 시작`);
-  const reader = file.stream().getReader();
-  let fileSent = 0;
-  let sequence = 0;
+  if (receivedBytes > 0) {
+    logEvent(`${file.name} ${formatBytes(receivedBytes)} 이어받기 감지`);
+  }
 
-  while (true) {
-    if (state.cancelRequested) {
-      throw new Error("전송 중지 요청");
-    }
+  let fileSent = receivedBytes;
 
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    for (let offset = 0; offset < value.byteLength; offset += CHUNK_SIZE) {
+  for (const [startIndex, endIndex] of missingRanges) {
+    for (let index = startIndex; index <= endIndex; index += 1) {
       if (state.cancelRequested) {
         throw new Error("전송 중지 요청");
       }
 
-      const plainChunk = value.slice(offset, offset + CHUNK_SIZE);
+      const start = index * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const plainChunk = await file.slice(start, end).arrayBuffer();
       const outbound = cryptoContext
-        ? await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonceForSequence(cryptoContext.noncePrefix, sequence) }, cryptoContext.key, plainChunk)
+        ? await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonceForSequence(cryptoContext.noncePrefix, index) }, cryptoContext.key, plainChunk)
         : plainChunk;
+
+      state.channel.send(JSON.stringify({
+        kind: "chunk",
+        id,
+        index,
+        size: plainChunk.byteLength,
+      }));
 
       await waitForChannelBuffer(state.channel);
       state.channel.send(outbound);
-      sequence += 1;
       fileSent += plainChunk.byteLength;
       setProgress(percent(batchSent + fileSent, totalBytes));
     }
@@ -776,7 +791,35 @@ async function sendOneFile(file, batchSent, totalBytes) {
     encrypted,
     peer: state.connectedPeer?.name || "상대 디바이스",
   });
-  return fileSent;
+  return file.size;
+}
+
+function waitForResumeAck(id) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      state.pendingResumeAcks.delete(id);
+      reject(new Error("수신자의 이어받기 응답 시간이 초과되었습니다."));
+    }, RESUME_ACK_TIMEOUT_MS);
+
+    state.pendingResumeAcks.set(id, {
+      resolve: (message) => {
+        clearTimeout(timeout);
+        resolve(message);
+      },
+      reject,
+      timeout,
+    });
+  });
+}
+
+function resolveResumeAck(message) {
+  const pending = state.pendingResumeAcks.get(message.id);
+  if (!pending) {
+    return;
+  }
+
+  state.pendingResumeAcks.delete(message.id);
+  pending.resolve(message);
 }
 
 function cancelTransfer() {
@@ -798,8 +841,18 @@ function receiveMessage(event) {
 
 async function handleTextMessage(raw) {
   const message = JSON.parse(raw);
+  if (message.kind === "resumeAck") {
+    resolveResumeAck(message);
+    return;
+  }
+
   if (message.kind === "meta") {
     await startReceive(message);
+    return;
+  }
+
+  if (message.kind === "chunk") {
+    prepareReceiveChunk(message);
     return;
   }
 
@@ -814,11 +867,21 @@ async function handleTextMessage(raw) {
 }
 
 async function startReceive(meta) {
+  await closeActiveReceiveQuietly();
+  state.activeReceive = null;
+
   let key = null;
   let noncePrefix = null;
   let fileHandle = null;
   let writer = null;
   let opfsHandle = null;
+  const chunkSize = meta.chunkSize || CHUNK_SIZE;
+  const chunkCount = meta.chunkCount || Math.ceil(meta.size / chunkSize);
+  let resumeState = loadResumeState(meta.id);
+  if (!isCompatibleResumeState(resumeState, meta, chunkSize, chunkCount)) {
+    resumeState = null;
+  }
+
   if (meta.encrypted) {
     const passphrase = elements.passphrase.value;
     if (!passphrase) {
@@ -837,7 +900,11 @@ async function startReceive(meta) {
           accept: { [meta.type || "application/octet-stream"]: [`.${extensionOf(meta.name)}`] },
         }],
       });
-      writer = await fileHandle.createWritable();
+      const target = await createWritableStream(fileHandle, Boolean(resumeState));
+      writer = target.writer;
+      if (resumeState && !target.resumeKept) {
+        resumeState = null;
+      }
     } catch (error) {
       if (error?.name !== "AbortError") {
         handleError(error);
@@ -849,26 +916,67 @@ async function startReceive(meta) {
     try {
       const root = await navigator.storage.getDirectory();
       opfsHandle = await root.getFileHandle(safeTempName(meta), { create: true });
-      writer = await opfsHandle.createWritable();
+      const target = await createWritableStream(opfsHandle, Boolean(resumeState));
+      writer = target.writer;
+      if (resumeState && !target.resumeKept) {
+        resumeState = null;
+      }
       logEvent(`${meta.name} OPFS 임시 저장 사용`);
     } catch (error) {
       handleError(error);
     }
   }
 
+  if (resumeState && !writer) {
+    resumeState = null;
+  }
+
+  const received = resumeState ? resumeBitmapToArray(resumeState.received, chunkCount) : Array(chunkCount).fill(false);
+  const bytes = resumeState ? receivedBytesFromBitmap(received, meta.size, chunkSize) : 0;
+
   state.activeReceive = {
     meta,
     buffers: [],
-    bytes: 0,
+    bytes,
     key,
     noncePrefix,
-    sequence: 0,
+    chunkSize,
+    chunkCount,
+    received,
+    pendingChunk: null,
     writer,
     opfsHandle,
     streamed: Boolean(writer),
+    persistResume: Boolean(writer),
   };
-  setProgress(0);
-  logEvent(`${meta.name} 수신 시작`);
+  sendResumeAck(state.activeReceive);
+  setProgress(percent(bytes, meta.size));
+  logEvent(bytes > 0 ? `${meta.name} ${formatBytes(bytes)}부터 이어받기` : `${meta.name} 수신 시작`);
+}
+
+function prepareReceiveChunk(message) {
+  const active = state.activeReceive;
+  if (!active || active.meta.id !== message.id) {
+    throw new Error("수신 중인 파일과 다른 청크가 도착했습니다.");
+  }
+  if (!Number.isInteger(message.index) || message.index < 0 || message.index >= active.chunkCount) {
+    throw new Error("잘못된 청크 번호를 받았습니다.");
+  }
+
+  active.pendingChunk = {
+    index: message.index,
+    size: message.size || 0,
+  };
+}
+
+function sendResumeAck(active) {
+  const message = {
+    kind: "resumeAck",
+    id: active.meta.id,
+    receivedBytes: active.bytes,
+    missingRanges: missingRangesFromBitmap(active.received),
+  };
+  state.channel?.send(JSON.stringify(message));
 }
 
 async function handleBinaryMessage(buffer) {
@@ -876,24 +984,46 @@ async function handleBinaryMessage(buffer) {
   if (!active) {
     throw new Error("수신 메타데이터 없이 파일 청크를 받았습니다.");
   }
-
-  const plain = active.key
-    ? await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonceForSequence(active.noncePrefix, active.sequence) }, active.key, buffer)
-    : buffer;
-
-  active.sequence += 1;
-  if (active.writer) {
-    await active.writer.write(new Uint8Array(plain));
-  } else {
-    active.buffers.push(plain);
+  if (!active.pendingChunk) {
+    throw new Error("청크 정보 없이 파일 데이터를 받았습니다.");
   }
-  active.bytes += plain.byteLength;
+
+  const chunk = active.pendingChunk;
+  const plain = active.key
+    ? await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonceForSequence(active.noncePrefix, chunk.index) }, active.key, buffer)
+    : buffer;
+  if (chunk.size && plain.byteLength !== chunk.size) {
+    throw new Error("청크 크기 검증에 실패했습니다.");
+  }
+
+  if (active.writer) {
+    await active.writer.write({
+      type: "write",
+      position: chunk.index * active.chunkSize,
+      data: new Uint8Array(plain),
+    });
+  } else {
+    active.buffers[chunk.index] = plain;
+  }
+
+  if (!active.received[chunk.index]) {
+    active.received[chunk.index] = true;
+    active.bytes += plain.byteLength;
+  }
+  active.pendingChunk = null;
+  saveResumeState(active);
   setProgress(percent(active.bytes, active.meta.size));
 }
 
 async function finishReceive(id) {
   const active = state.activeReceive;
   if (!active || active.meta.id !== id) {
+    return;
+  }
+
+  if (!allChunksReceived(active.received)) {
+    saveResumeState(active);
+    logEvent(`${active.meta.name} 일부 청크가 남아 이어받기 상태를 보존했습니다.`, true);
     return;
   }
 
@@ -907,7 +1037,7 @@ async function finishReceive(id) {
       addReceivedFile(active.meta, null, { saved: true });
     }
   } else {
-    const blob = new Blob(active.buffers, { type: active.meta.type });
+    const blob = new Blob(active.buffers.slice(0, active.chunkCount), { type: active.meta.type });
     const url = URL.createObjectURL(blob);
     addReceivedFile(active.meta, url);
   }
@@ -922,6 +1052,7 @@ async function finishReceive(id) {
   });
   setProgress(100);
   logEvent(`${active.meta.name} 수신 완료`);
+  clearResumeState(active.meta.id);
   state.activeReceive = null;
 }
 
@@ -995,7 +1126,108 @@ function shouldStreamToFile() {
 }
 
 function shouldUseOpfs() {
-  return elements.streamSave.checked && Boolean(navigator.storage?.getDirectory);
+  return Boolean(navigator.storage?.getDirectory);
+}
+
+async function createWritableStream(fileHandle, resume) {
+  if (resume) {
+    try {
+      return {
+        writer: await fileHandle.createWritable({ keepExistingData: true }),
+        resumeKept: true,
+      };
+    } catch {
+      return {
+        writer: await fileHandle.createWritable(),
+        resumeKept: false,
+      };
+    }
+  }
+  return {
+    writer: await fileHandle.createWritable(),
+    resumeKept: false,
+  };
+}
+
+function resumeStorageKey(id) {
+  return `${RESUME_STORAGE_PREFIX}${id}`;
+}
+
+function loadResumeState(id) {
+  try {
+    return JSON.parse(localStorage.getItem(resumeStorageKey(id)) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveResumeState(active) {
+  if (!active.persistResume) {
+    return;
+  }
+
+  localStorage.setItem(resumeStorageKey(active.meta.id), JSON.stringify({
+    id: active.meta.id,
+    name: active.meta.name,
+    size: active.meta.size,
+    chunkSize: active.chunkSize,
+    chunkCount: active.chunkCount,
+    received: active.received.map((value) => (value ? "1" : "0")).join(""),
+    updatedAt: Date.now(),
+  }));
+}
+
+function clearResumeState(id) {
+  localStorage.removeItem(resumeStorageKey(id));
+}
+
+function isCompatibleResumeState(resumeState, meta, chunkSize, chunkCount) {
+  return Boolean(
+    resumeState
+      && resumeState.id === meta.id
+      && resumeState.name === meta.name
+      && resumeState.size === meta.size
+      && resumeState.chunkSize === chunkSize
+      && resumeState.chunkCount === chunkCount
+      && typeof resumeState.received === "string"
+      && resumeState.received.length === chunkCount,
+  );
+}
+
+function resumeBitmapToArray(bitmap, chunkCount) {
+  return Array.from({ length: chunkCount }, (_, index) => bitmap[index] === "1");
+}
+
+function missingRangesFromBitmap(received) {
+  const ranges = [];
+  let start = null;
+
+  for (let index = 0; index < received.length; index += 1) {
+    if (!received[index] && start === null) {
+      start = index;
+    }
+    if ((received[index] || index === received.length - 1) && start !== null) {
+      ranges.push([start, received[index] ? index - 1 : index]);
+      start = null;
+    }
+  }
+
+  return ranges;
+}
+
+function receivedBytesFromBitmap(received, totalSize, chunkSize) {
+  return received.reduce((sum, value, index) => {
+    if (!value) {
+      return sum;
+    }
+    const start = index * chunkSize;
+    const end = Math.min(start + chunkSize, totalSize);
+    return sum + Math.max(0, end - start);
+  }, 0);
+}
+
+function allChunksReceived(received) {
+  return received.every(Boolean);
 }
 
 function updateSendButton() {
@@ -1006,6 +1238,12 @@ function updateSendButton() {
 }
 
 function resetConnection(clearSignals = true) {
+  for (const [id, pending] of state.pendingResumeAcks) {
+    clearTimeout(pending.timeout);
+    pending.reject(new Error("연결이 초기화되어 이어받기 응답을 취소했습니다."));
+    state.pendingResumeAcks.delete(id);
+  }
+  closeActiveReceiveQuietly();
   state.channel?.close();
   state.pc?.close();
   state.pc = null;
@@ -1030,6 +1268,19 @@ function resetConnection(clearSignals = true) {
   setProgress(0);
   setConnection("오프라인", "대기 중", false);
   updateSendButton();
+}
+
+async function closeActiveReceiveQuietly() {
+  const active = state.activeReceive;
+  if (!active?.writer) {
+    return;
+  }
+
+  try {
+    await active.writer.close();
+  } catch {
+    // 이미 닫힌 writer는 이어받기 상태만 남기고 무시합니다.
+  }
 }
 
 function setConnection(label, summary, connected) {
